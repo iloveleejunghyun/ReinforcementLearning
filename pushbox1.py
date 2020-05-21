@@ -28,6 +28,7 @@ import matplotlib.pyplot as plt
 import pickle
 from matplotlib import style
 import time
+from time import sleep
 
 SIZE = 10
 HM_EPISODES = 25000
@@ -38,14 +39,14 @@ DISTANCE_REDUCE_REWARD = 1
 DISTANCE_0_REWARD = 25
 
 
-epsilon = 0.9
+epsilon = 0.1
 
 EPS_DECAY = 0.9998  # Every episode will be epsilon*EPS_DECAY
 
-SHOW_EVERY = 3000  # how often to play through env visually.
+SHOW_EVERY = 1  # how often to play through env visually.
 
-# start_q_table = "qtable-1588121034.pickle" # None or Filename
-start_q_table = None  # None or Filename
+start_q_table = "qtable-1590096481.pickle"  # None or Filename
+# start_q_table = None  # None or Filename
 
 
 LEARNING_RATE = 0.1
@@ -64,9 +65,13 @@ d = {1: (255, 175, 0),
 
 
 class Blob:
-    def __init__(self):
-        self.x = np.random.randint(0, SIZE)
-        self.y = np.random.randint(0, SIZE)
+    def __init__(self, edge=True):
+        if edge:
+            self.x = np.random.randint(0, SIZE)
+            self.y = np.random.randint(0, SIZE)
+        else:
+            self.x = np.random.randint(1, SIZE-1)
+            self.y = np.random.randint(1, SIZE-1)
 
     def __str__(self):
         return f"{self.x}, {self.y}"
@@ -206,7 +211,7 @@ episode_rewards = []
 
 for episode in range(HM_EPISODES):
     player = Blob()
-    box = Blob()
+    box = Blob(False)
     dest = Blob()
     if episode % SHOW_EVERY == 0:
         print(f"on #{episode}, epsilon is {epsilon}")
@@ -251,18 +256,16 @@ for episode in range(HM_EPISODES):
         # TODO 下次继续
         # NOW WE KNOW THE REWARD, LET'S CALC YO
         # first we need to obs immediately after the move.
-        # 24 顺序：先判断相对位置，然后走最大收益行动，然后又判断相对位置，又找最大收益行动？
-        new_obs = (player-food, player-enemy)
-        # 25 这个取出来最大收益，而不是最大收益对应的行动。是的用于计算新的收益。
+        new_obs = (player-box, box-dest)
         max_future_q = np.max(q_table[new_obs])
         # 26 把当前相对位置状态和action下对应的收益qvalue取了出来。
         current_q = q_table[obs][action]
 
-        # 27 新q-value是固定的几种情况。如果找到食物，那就固定为最大收益。
-        # 不然的话，就用公式计算新收益。这里就是限制了最大收益。
-        if reward == FOOD_REWARD:
-            new_q = FOOD_REWARD
+        # q-value最大值只能是箱子到达目标点的收益
+        if reward == DISTANCE_0_REWARD:
+            new_q = DISTANCE_0_REWARD
         else:
+            # 其他情况按照公式计算
             new_q = (1 - LEARNING_RATE) * current_q + \
                 LEARNING_RATE * (reward + DISCOUNT * max_future_q)
         q_table[obs][action] = new_q
@@ -273,12 +276,12 @@ for episode in range(HM_EPISODES):
             # starts an rbg of our size
             env = np.zeros((SIZE, SIZE, 3), dtype=np.uint8)
             # 29 设置颜色。数组中的每个位置的值是颜色。
-            # sets the food location tile to green color
-            env[food.x][food.y] = d[FOOD_N]
+            # sets the box location tile to green color
+            env[box.x][box.y] = d[BOX_N]
             # sets the player tile to blue
             env[player.x][player.y] = d[PLAYER_N]
-            # sets the enemy location to red
-            env[enemy.x][enemy.y] = d[ENEMY_N]
+            # sets the dest location to red
+            env[dest.x][dest.y] = d[DEST_N]
             # 30 构建image的一种方法，传入一个二维数组。数组的长宽是image的长宽，数组的值是image的颜色。
             # reading to rgb. Apparently. Even tho color definitions are bgr. ???
             # 上面构建env主要是为了方便下面生成cv图像
@@ -291,19 +294,19 @@ for episode in range(HM_EPISODES):
             # 31 又把这个image变成了数组？没看懂，固定套路？
             cv2.imshow("image", np.array(img))  # show it!
             # crummy code to hang at the end if we reach abrupt end for good reasons or not.
-            if reward == FOOD_REWARD or reward == ENEMY_PENALTY:
+            if reward == DISTANCE_0_REWARD or reward == CAN_NOT_MOVE_PENALTY:
                 # 32 ord是什么意思？ 点q键。返回q的unicode字符编码。
                 if cv2.waitKey(500) & 0xFF == ord('q'):
                     break
             else:
                 if cv2.waitKey(1) & 0xFF == ord('q'):
                     break
-
+            sleep(0.1)
         # 32 episode_reward是指每一集的总reward, 意义何在？ 后面要计算平均值，用于统计是否进步。
         episode_reward += reward
 
         # 33 结束.碰到敌人或者碰到食物。 推箱子中也是，箱子碰到目标点就结束。
-        if reward == FOOD_REWARD or reward == ENEMY_PENALTY:
+        if reward == DISTANCE_0_REWARD or reward == CAN_NOT_MOVE_PENALTY:
             break
 
     # print(episode_reward)
