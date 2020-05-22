@@ -31,7 +31,7 @@ import time
 from time import sleep
 
 SIZE = 10
-HM_EPISODES = 25000
+HM_EPISODES = 100000
 
 MOVE_PENALTY = -1
 CAN_NOT_MOVE_PENALTY = -300
@@ -45,7 +45,7 @@ EPS_DECAY = 0.9998  # Every episode will be epsilon*EPS_DECAY
 
 SHOW_EVERY = 1  # how often to play through env visually.
 
-start_q_table = "qtable-1590096481.pickle"  # None or Filename
+start_q_table = "qtable-1590171988.pickle"  # None or Filename
 # start_q_table = None  # None or Filename
 
 
@@ -205,7 +205,75 @@ else:
 
 # print(q_table)
 
+
+def take_action(player, action, box, dest):
+    # 这里要把箱子传进去。因为玩家的移动可能会影响箱子的位置。
+    player.action(action, box)
+    # 这里要修改为距离的增加或者减少
+    cur_distance = (box.x - dest.x) ** 2 + (box.y - dest.y) ** 2
+    if cur_distance == 0:
+        reward = DISTANCE_0_REWARD
+    elif last_distance > cur_distance:
+        reward = DISTANCE_REDUCE_REWARD
+    # TODO 这里还要增加箱子移动到角落卡住的惩罚。
+    else:
+        reward = MOVE_PENALTY
+    return reward
+
+
+def calc_q_value(reward, player, box, dest):
+    new_obs = (player-box, box-dest)
+    max_future_q = np.max(q_table[new_obs])
+    # 26 把当前相对位置状态和action下对应的收益qvalue取了出来。
+    current_q = q_table[obs][action]
+
+    # q-value最大值只能是箱子到达目标点的收益
+    # if reward == DISTANCE_0_REWARD:
+    #     new_q = DISTANCE_0_REWARD
+    # else:
+    # 其他情况按照公式计算
+    # 这样应该会导致new_q上限变得更高
+    new_q = (1 - LEARNING_RATE) * current_q + \
+        LEARNING_RATE * (reward + DISCOUNT * max_future_q)
+    return new_q
+
+
+def show_movement(player, box, dest):
+    # 28 传入了3元组？，输出是个3维数组。前面二维是x，y，第三的维度？是颜色的索引。其实直接传颜色进去也行吧。本来颜色。
+    # 用这种方式定义了一个环境，x值，y值，以及格子颜色
+    # starts an rbg of our size
+    env = np.zeros((SIZE, SIZE, 3), dtype=np.uint8)
+    # 29 设置颜色。数组中的每个位置的值是颜色。
+    # sets the box location tile to green color
+    env[box.x][box.y] = d[BOX_N]
+    # sets the player tile to blue
+    env[player.x][player.y] = d[PLAYER_N]
+    # sets the dest location to red
+    env[dest.x][dest.y] = d[DEST_N]
+    # 30 构建image的一种方法，传入一个二维数组。数组的长宽是image的长宽，数组的值是image的颜色。
+    # reading to rgb. Apparently. Even tho color definitions are bgr. ???
+    # 上面构建env主要是为了方便下面生成cv图像
+    img = Image.fromarray(env, 'RGB')
+    # 31 image进行拉伸，不然太小了。
+    # resizing so we can see our agent in all its glory.
+    # print(img)
+    img = img.resize((300, 300))
+    # print(img)
+    # 31 又把这个image变成了数组？没看懂，固定套路？
+    cv2.imshow("image", np.array(img))  # show it!
+    # crummy code to hang at the end if we reach abrupt end for good reasons or not.
+    if reward == DISTANCE_0_REWARD or reward == CAN_NOT_MOVE_PENALTY:
+        # 32 ord是什么意思？ 点q键。返回q的unicode字符编码。
+        if cv2.waitKey(500) & 0xFF == ord('q'):
+            return False
+    else:
+        if cv2.waitKey(1) & 0xFF == ord('q'):
+            return False
+    sleep(0.1)
+
+
 # can look up from Q-table with: print(q_table[((-9, -2), (3, 9))]) for example
+
 
 episode_rewards = []
 
@@ -235,73 +303,21 @@ for episode in range(HM_EPISODES):
         else:
             action = np.random.randint(0, 4)
         # Take the action!
-        # 这里要把箱子传进去。因为玩家的移动可能会影响箱子的位置。
-        player.action(action, box)
+        reward = take_action(player, action, box, dest)
 
         #### MAYBE ###
         # enemy.move()
         # food.move()
         ##############
 
-        # 这里要修改为距离的增加或者减少
-        cur_distance = (box.x - dest.x) ** 2 + (box.y - dest.y) ** 2
-        if cur_distance == 0:
-            reward = DISTANCE_0_REWARD
-        elif last_distance > cur_distance:
-            reward = DISTANCE_REDUCE_REWARD
-        # TODO 这里还要增加箱子移动到角落卡住的惩罚。
-        else:
-            reward = MOVE_PENALTY
-
-        # TODO 下次继续
         # NOW WE KNOW THE REWARD, LET'S CALC YO
         # first we need to obs immediately after the move.
-        new_obs = (player-box, box-dest)
-        max_future_q = np.max(q_table[new_obs])
-        # 26 把当前相对位置状态和action下对应的收益qvalue取了出来。
-        current_q = q_table[obs][action]
-
-        # q-value最大值只能是箱子到达目标点的收益
-        if reward == DISTANCE_0_REWARD:
-            new_q = DISTANCE_0_REWARD
-        else:
-            # 其他情况按照公式计算
-            new_q = (1 - LEARNING_RATE) * current_q + \
-                LEARNING_RATE * (reward + DISCOUNT * max_future_q)
+        new_q = calc_q_value(reward, player, box, dest)
         q_table[obs][action] = new_q
 
         if show:
-            # 28 传入了3元组？，输出是个3维数组。前面二维是x，y，第三的维度？是颜色的索引。其实直接传颜色进去也行吧。本来颜色。
-            # 用这种方式定义了一个环境，x值，y值，以及格子颜色
-            # starts an rbg of our size
-            env = np.zeros((SIZE, SIZE, 3), dtype=np.uint8)
-            # 29 设置颜色。数组中的每个位置的值是颜色。
-            # sets the box location tile to green color
-            env[box.x][box.y] = d[BOX_N]
-            # sets the player tile to blue
-            env[player.x][player.y] = d[PLAYER_N]
-            # sets the dest location to red
-            env[dest.x][dest.y] = d[DEST_N]
-            # 30 构建image的一种方法，传入一个二维数组。数组的长宽是image的长宽，数组的值是image的颜色。
-            # reading to rgb. Apparently. Even tho color definitions are bgr. ???
-            # 上面构建env主要是为了方便下面生成cv图像
-            img = Image.fromarray(env, 'RGB')
-            # 31 image进行拉伸，不然太小了。
-            # resizing so we can see our agent in all its glory.
-            # print(img)
-            img = img.resize((300, 300))
-            # print(img)
-            # 31 又把这个image变成了数组？没看懂，固定套路？
-            cv2.imshow("image", np.array(img))  # show it!
-            # crummy code to hang at the end if we reach abrupt end for good reasons or not.
-            if reward == DISTANCE_0_REWARD or reward == CAN_NOT_MOVE_PENALTY:
-                # 32 ord是什么意思？ 点q键。返回q的unicode字符编码。
-                if cv2.waitKey(500) & 0xFF == ord('q'):
-                    break
-            else:
-                if cv2.waitKey(1) & 0xFF == ord('q'):
-                    break
-            sleep(0.1)
+            show_movement(player, box, dest)
+
         # 32 episode_reward是指每一集的总reward, 意义何在？ 后面要计算平均值，用于统计是否进步。
         episode_reward += reward
 
