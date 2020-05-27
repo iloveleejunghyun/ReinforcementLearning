@@ -2,41 +2,54 @@
 '''
 模拟真实推箱子游戏
 1、固定的人物、箱子、目标点位置。
-2、地图形状不是矩形。但是暂时做成矩形。如下：1是人物，2是箱子，3是矩形
-- - - 3 - -
-- - - 2 - -
-- - - - - -
-3 2 - 1 2 3
-- - - 2 - -
-- - - 3 - -
-3、多个箱子，多个目标点。修改状态空间设计，所有方块的状态可以用绝对值。
-总共有4+4+1个方块，每个方块有36种状态，积为541种可能。很小。
-4、reward。每推一个箱子到目标点+25， 把箱子推出目标点-25，其他-1
-5、每集结束条件，4个箱子全部到达目标点上，或者超过200步。
+2、地图形状不是矩形。但是暂时做成矩形。如下：1是人物，2是箱子，3是矩形. +是墙
++ + + + +   +
++ 1     +   +
++   2 2 +   + + +
++   2   +   + 3 +
++ + +   + + + 3 +
++ + +         3 +
++ +       +     +
++ +       + + + +
++ + + + + +
+
+3、多个箱子，多个目标点。修改状态空间设计，所有方块的状态可以用绝对值。因为目标点是不可移动的。所以只计算人物和箱子的状态。
+总共有3+1个方块，每个方块有25种状态，总共有25的4次方即390625种可能。很小。
+4、reward。每推一个箱子到目标点，从上到下依次是+45,+35,+25， 把箱子推出目标点减去原来的reward，其他-1
+5、每集结束条件，3个箱子全部到达目标点上，或者超过200步。
 6、移动方法需要改变。 推动箱子前要判断箱子前面是否有障碍(边界或者另一个箱子)，
-因此要增加hasObstacle函数，并且action函数需要传入4个箱子的list。
+因此要增加hasObstacle函数，并且action函数需要传入3个箱子的list。
+设置一个List，存储人物和箱子的可达状态。除了这些可达点，其他的位置都是墙。
 
 '''
+from time import sleep
+import time
+from matplotlib import style
+import pickle
+import matplotlib.pyplot as plt
+import cv2
+from PIL import Image
+import numpy as np
+all_state = [(1, 1), (1, 2), (1, 3),
+             (2, 1), (2, 2), (2, 3),
+             (3, 1), (3, 2), (3, 3), (3, 7),
+             (4, 3), (4, 7),
+             (5, 3), (5, 4), (5, 5), (5, 6), (5, 7),
+             (6, 2), (6, 3), (6, 4), (6, 6), (6, 7),
+             (7, 2), (7, 3), (7, 4)]
 
 # style.use("ggplot")
 
 
-import numpy as np
-from PIL import Image
-import cv2
-import matplotlib.pyplot as plt
-import pickle
-from matplotlib import style
-import time
-from time import sleep
 SIZE = 10
 HM_EPISODES = 10000
 
 MOVE_PENALTY = -1
 # CAN_NOT_MOVE_PENALTY = -300
 # DISTANCE_REDUCE_REWARD = 1
-DISTANCE_0_REWARD = 25
-
+DEST_0_REWARD = 45
+DEST_1_REWARD = 35
+DEST_2_REWARD = 25
 
 epsilon = 0.9
 
@@ -54,23 +67,21 @@ DISCOUNT = 0.95
 PLAYER_N = 1  # player key in dict
 BOX_N = 2  # box key in dict
 DEST_N = 3  # dest key in dict
+WALL_N = 4  # dest key in dict
 
 # the dict!
 d = {1: (255, 175, 0),
      2: (0, 255, 0),
-     3: (0, 0, 255)}
+     3: (0, 0, 255),
+     4: (0, 0, 0)}
 
-# 8 小方块。用于定义玩家、箱子和目标点
+# 8 小方块。用于定义玩家、箱子和目标点, 墙
 
 
 class Blob:
-    def __init__(self, edge=True):
-        if edge:
-            self.x = np.random.randint(0, SIZE)
-            self.y = np.random.randint(0, SIZE)
-        else:
-            self.x = np.random.randint(1, SIZE-1)
-            self.y = np.random.randint(1, SIZE-1)
+    def __init__(self, x, y):
+        self.x = x
+        self.y = y
 
     def __str__(self):
         return f"{self.x}, {self.y}"
@@ -85,96 +96,47 @@ class Blob:
 
         if choice == 0:
             # 上
-            if box.x == self.x and box.y == self.y-1:
-                # box在玩家上面一格
-                # TODO 增加hashObstacle函数
-                if box.y == 0:
-                    # box在边界，推不动
-                    return
+            box = has_box_in_front(self.x, self.y, choice, boxList)
+            if box:
+                # 判断box的前面还有没有其他box或者墙
+                res = has_box_in_front(box.x, box.y, choice, boxList)
+                if not res:
+                    res = has_wall_in_front(box.x, box.y, choice)
+                if res:
+                    # 推不动
+                    pass
                 else:
-                    # box和player同时向上移动一格
-                    box.y = box.y-1
-                    self.y = self.y-1
+                    # box和人物都往该方向移动一格
+                    pass
             else:
-                # TODO 增加hashObstacle函数
-                if self.y == 0:
-                    return
+                # 没有box
+                res = has_wall_in_front(self.x, self.y, choice)
+                if res:
+                    # 推不动
+                    pass
                 else:
-                    # 只有玩家上移动一格
-                    self.y = self.y-1
-            return
-        elif choice == 1:
-            # 下
-            if box.x == self.x and box.y == self.y+1:
-                # box在玩家下面一格
-                # TODO 增加hashObstacle函数
-                if box.y == SIZE-1:
-                    # box在边界，推不动
-                    return
-                else:
-                    # box和player同时向下移动一格
-                    box.y = box.y+1
-                    self.y = self.y+1
-            else:
-                # TODO 增加hashObstacle函数
-                if self.y == SIZE-1:
-                    return
-                else:
-                    # 只有玩家下移动一格
-                    self.y = self.y+1
-            return
-
-        elif choice == 2:
-            # 左
-            if box.x == self.x-1 and box.y == self.y:
-                # box在玩家左面一格
-                # TODO 增加hashObstacle函数
-                if box.x == 0:
-                    # box在边界，推不动
-                    return
-                else:
-                    # box和player同时向左移动一格
-                    box.x = box.x-1
-                    self.x = self.x-1
-            else:
-                # TODO 增加hashObstacle函数
-                if self.x == 0:
-                    return
-                else:
-                    # 只有玩家左移动一格
-                    self.x = self.x-1
-            return
-        elif choice == 3:
-            # 右
-            if box.x == self.x+1 and box.y == self.y:
-                # box在玩家右面一格
-                # TODO 增加hashObstacle函数
-                if box.x == SIZE-1:
-                    # box在边界，推不动
-                    return
-                else:
-                    # box和player同时向右移动一格
-                    box.x = box.x+1
-                    self.x = self.x+1
-            else:
-                # TODO 增加hashObstacle函数
-                if self.x == SIZE-1:
-                    return
-                else:
-                    # 只有玩家右移动一格
-                    self.x = self.x+1
-            return
+                    # 人物往该方向移动一格
+                    pass
+        elif choince == 1:
+            # 同上
+            pass
+        elif choince == 2:
+            # 同上
+            pass
+        elif choince == 3:
+            # 同上
+            pass
 
 
-# TODO 接下来修改这
+# 从all_state表里取出来赋值
 if start_q_table is None:
     # initialize the q-table#
     q_table = {}
-    for i in range(-SIZE+1, SIZE):
-        for ii in range(-SIZE+1, SIZE):
-            for iii in range(-SIZE+1, SIZE):
-                for iiii in range(-SIZE+1, SIZE):
-                    q_table[((i, ii), (iii, iiii))] = [
+    for player in all_state:  # 玩家
+        for box1 in all_state:
+            for box2 in all_state:
+                for box3 in all_state:
+                    q_table[(player, box1, box2, box3)] = [
                         np.random.uniform(-5, 0) for i in range(4)]
 
 
@@ -185,36 +147,32 @@ else:
 # print(q_table)
 
 
-def take_action(player, action, box, dest):
+def take_action(player, action, box_list, dest):
     # 这里要把箱子传进去。因为玩家的移动可能会影响箱子的位置。
-    player.action(action, box)
-    # 这里要修改为距离的增加或者减少
-    cur_distance = (box.x - dest.x) ** 2 + (box.y - dest.y) ** 2
-    if cur_distance == 0:
-        reward = DISTANCE_0_REWARD
-    elif last_distance > cur_distance:
-        reward = DISTANCE_REDUCE_REWARD
-    # TODO 这里还要增加箱子移动到角落卡住的惩罚。
-    else:
-        reward = MOVE_PENALTY
+    player.action(action, box_list)
+    # TODO 判断3个箱子有多少个在dest中,然后计算总的reward
+
+    # 其他情况都-1
+    # else:
+    #     reward = MOVE_PENALTY
     return reward
 
 
-def calc_q_value(reward, player, box, dest):
-    new_obs = (player-box, box-dest)
-    max_future_q = np.max(q_table[new_obs])
-    # 26 把当前相对位置状态和action下对应的收益qvalue取了出来。
-    current_q = q_table[obs][action]
+# TODO 这个很复杂，有3个box
+def calc_q_value(reward, player, box_list):
+    new_pos = (player.position(), box_list[0].position(),
+               box_list[1].position(), box_list[2].position())
+    max_future_q = np.max(q_table[new_pos])
 
-    # q-value最大值只能是箱子到达目标点的收益
-    # if reward == DISTANCE_0_REWARD:
-    #     new_q = DISTANCE_0_REWARD
-    # else:
-    # 其他情况按照公式计算
-    # 这样应该会导致new_q上限变得更高
+    # 26 把当前相对位置状态和action下对应的收益qvalue取了出来。
+    # TODO 这个要思考一下是不是new_pos
+    current_q = q_table[new_pos][action]
+
     new_q = (1 - LEARNING_RATE) * current_q + \
         LEARNING_RATE * (reward + DISCOUNT * max_future_q)
     return new_q
+
+# TODO 接下来修改这里
 
 
 def show_movement(player, box, dest):
