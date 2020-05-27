@@ -41,15 +41,16 @@ all_state = [(1, 1), (1, 2), (1, 3),
 # style.use("ggplot")
 
 
-SIZE = 10
+SIZE = 9
 HM_EPISODES = 10000
 
 MOVE_PENALTY = -1
-# CAN_NOT_MOVE_PENALTY = -300
+CAN_NOT_MOVE_PENALTY = -300
 # DISTANCE_REDUCE_REWARD = 1
-DEST_0_REWARD = 45
-DEST_1_REWARD = 35
-DEST_2_REWARD = 25
+# 其实这里的设计不太对，如果移除箱子，应该有惩罚。
+DEST_1_REWARD = 25
+DEST_2_REWARD = 50
+DEST_3_REWARD = 75
 
 epsilon = 0.9
 
@@ -67,15 +68,66 @@ DISCOUNT = 0.95
 PLAYER_N = 1  # player key in dict
 BOX_N = 2  # box key in dict
 DEST_N = 3  # dest key in dict
-WALL_N = 4  # dest key in dict
+WALL_N = 4
+ROAD_N = 5
 
 # the dict!
 d = {1: (255, 175, 0),
      2: (0, 255, 0),
      3: (0, 0, 255),
-     4: (0, 0, 0)}
+     4: (0, 0, 0),
+     5: (255, 255, 255)}
 
 # 8 小方块。用于定义玩家、箱子和目标点, 墙
+
+
+def has_box_in_front(x, y, choice, box_list):
+    if choice == 0:
+        y = y-1
+    elif choice == 1:
+        y = y+1
+    elif choice == 2:
+        x = x-1
+    elif choice == 3:
+        x = x+1
+    for box in box_list:
+        if box.position() == (x, y):
+            return box
+    return None
+
+
+def has_wall_in_front(x, y, choice):
+    if choice == 0:
+        y = y-1
+    elif choice == 1:
+        y = y+1
+    elif choice == 2:
+        x = x-1
+    elif choice == 3:
+        x = x+1
+    for pos in all_state:
+        if pos == (x, y):
+            return True
+    return False
+
+
+def move(player, box, choice):
+    if choice == 0:
+        player.y = player.y - 1
+        if box:
+            box.y = box.y - 1
+    elif choice == 1:
+        player.y = player.y + 1
+        if box:
+            box.y = box.y + 1
+    elif choice == 2:
+        player.x = player.x - 1
+        if box:
+            box.x = box.x - 1
+    elif choice == 3:
+        player.x = player.x + 1
+        if box:
+            box.x = box.x + 1
 
 
 class Blob:
@@ -89,43 +141,28 @@ class Blob:
     def __sub__(self, other):
         return (self.x-other.x, self.y-other.y)
 
-    def action(self, choice, boxList):
+    def action(self, choice, box_list):
         '''
         Gives us 4 total movement options. (0,1,2,3). 分别为上下左右
         '''
-
-        if choice == 0:
-            # 上
-            box = has_box_in_front(self.x, self.y, choice, boxList)
-            if box:
-                # 判断box的前面还有没有其他box或者墙
-                res = has_box_in_front(box.x, box.y, choice, boxList)
+        box = has_box_in_front(self.x, self.y, choice, box_list)
+        if box:
+            # 判断box的前面还有没有其他box或者墙
+            res = has_box_in_front(box.x, box.y, choice, box_list)
+            if not res:
+                res = has_wall_in_front(box.x, box.y, choice)
                 if not res:
-                    res = has_wall_in_front(box.x, box.y, choice)
-                if res:
-                    # 推不动
-                    pass
-                else:
                     # box和人物都往该方向移动一格
-                    pass
-            else:
-                # 没有box
-                res = has_wall_in_front(self.x, self.y, choice)
-                if res:
-                    # 推不动
-                    pass
-                else:
-                    # 人物往该方向移动一格
-                    pass
-        elif choince == 1:
-            # 同上
-            pass
-        elif choince == 2:
-            # 同上
-            pass
-        elif choince == 3:
-            # 同上
-            pass
+                    move(player, box, choice)
+        else:
+            # 没有box
+            res = has_wall_in_front(self.x, self.y, choice)
+            if not res:
+                # 人物往该方向移动一格
+                move(player, None, choice)
+
+    def position(self):
+        return self.x, self.y
 
 
 # 从all_state表里取出来赋值
@@ -147,14 +184,21 @@ else:
 # print(q_table)
 
 
-def take_action(player, action, box_list, dest):
+def take_action(player, action, box_list, dest_list):
     # 这里要把箱子传进去。因为玩家的移动可能会影响箱子的位置。
     player.action(action, box_list)
-    # TODO 判断3个箱子有多少个在dest中,然后计算总的reward
+    # 判断3个箱子有多少个在dest中,然后计算总的reward
+    count = 0
+    for box in box_list:
+        for dest in dest_list:
+            if box.position() == dest.position():
+                count += 1
+    if count > 0:
+        reward = count * DEST_1_REWARD
+    else:
+        # 其他情况都-1
+        reward = MOVE_PENALTY
 
-    # 其他情况都-1
-    # else:
-    #     reward = MOVE_PENALTY
     return reward
 
 
@@ -172,21 +216,29 @@ def calc_q_value(reward, player, box_list):
         LEARNING_RATE * (reward + DISCOUNT * max_future_q)
     return new_q
 
-# TODO 接下来修改这里
 
-
-def show_movement(player, box, dest):
-    # 28 传入了3元组？，输出是个3维数组。前面二维是x，y，第三的维度？是颜色的索引。其实直接传颜色进去也行吧。本来颜色。
+def show_movement(player, box_list, dest_list):
+    # 前面二维是x，y，第三的维度是颜色的索引。其实直接传颜色进去也行吧。本来颜色。
     # 用这种方式定义了一个环境，x值，y值，以及格子颜色
     # starts an rbg of our size
+    # 首先把所有区域设置成墙
     env = np.zeros((SIZE, SIZE, 3), dtype=np.uint8)
-    # 29 设置颜色。数组中的每个位置的值是颜色。
-    # sets the box location tile to green color
-    env[box.x][box.y] = d[BOX_N]
+
+    # 然后修改可达点的颜色
+    for x, y in all_state:
+        env[x, y] = d[ROAD_N]
+
+    # 然后再修改玩家、box、dest的颜色
     # sets the player tile to blue
     env[player.x][player.y] = d[PLAYER_N]
+    # sets the box location tile to green color
+    for box in box_list:
+        env[box.x][box.y] = d[BOX_N]
+
     # sets the dest location to red
-    env[dest.x][dest.y] = d[DEST_N]
+    for dest in dest_list:
+        env[dest.x][dest.y] = d[DEST_N]
+
     # 30 构建image的一种方法，传入一个二维数组。数组的长宽是image的长宽，数组的值是image的颜色。
     # reading to rgb. Apparently. Even tho color definitions are bgr. ???
     # 上面构建env主要是为了方便下面生成cv图像
@@ -199,7 +251,7 @@ def show_movement(player, box, dest):
     # 31 又把这个image变成了数组？没看懂，固定套路？
     cv2.imshow("image", np.array(img))  # show it!
     # crummy code to hang at the end if we reach abrupt end for good reasons or not.
-    if reward == DISTANCE_0_REWARD or reward == CAN_NOT_MOVE_PENALTY:
+    if reward == DEST_3_REWARD:
         # 32 ord是什么意思？ 点q键。返回q的unicode字符编码。
         if cv2.waitKey(500) & 0xFF == ord('q'):
             return False
@@ -215,9 +267,9 @@ def show_movement(player, box, dest):
 episode_rewards = []
 
 for episode in range(HM_EPISODES):
-    player = Blob()
-    box = Blob(False)
-    dest = Blob()
+    player = Blob(1, 1)
+    box_list = [Blob(2, 2), Blob(2, 3), Blob(3, 2)]
+    dest_list = [Blob(7, 3), Blob(7, 4), Blob(7, 5)]
     if episode % SHOW_EVERY == 0:
         print(f"on #{episode}, epsilon is {epsilon}")
         print(
@@ -229,37 +281,33 @@ for episode in range(HM_EPISODES):
     episode_reward = 0
     last_distance = None
     for i in range(200):
+        # 这里就需要修改了，不用通过相对位置计算reward。 只有到达光标点计算reward
 
-        obs = (player-box, box-dest)
-        if last_distance == None:
-            last_distance = (box.x - dest.x) ** 2 + \
-                (box.y - dest.y) ** 2  # 上一次的距离初始化为当前第一次距离
-
+        # 通过当前的位置计算出最大q-value的行动
         if np.random.random() > epsilon:
-            action = np.argmax(q_table[obs])
+            action = np.argmax(q_table[player.position(),
+                                       box_list[0].position(
+            ), box_list[1].position(),
+                box_list[2].position()])
         else:
             action = np.random.randint(0, 4)
-        # Take the action!
-        reward = take_action(player, action, box, dest)
 
-        #### MAYBE ###
-        # enemy.move()
-        # food.move()
-        ##############
+        # Take the action!
+        reward = take_action(player, action, box_list, dest_list)
 
         # NOW WE KNOW THE REWARD, LET'S CALC YO
         # first we need to obs immediately after the move.
-        new_q = calc_q_value(reward, player, box, dest)
+        new_q = calc_q_value(reward, player, box_list)
         q_table[obs][action] = new_q
 
         if show:
-            show_movement(player, box, dest)
+            show_movement(player, box_list, dest_list)
 
-        # 32 episode_reward是指每一集的总reward, 意义何在？ 后面要计算平均值，用于统计是否进步。
+        # 用于计算平均reward
         episode_reward += reward
 
         # 33 结束.碰到敌人或者碰到食物。 推箱子中也是，箱子碰到目标点就结束。
-        if reward == DISTANCE_0_REWARD or reward == CAN_NOT_MOVE_PENALTY:
+        if reward == DEST_3_REWARD or reward == CAN_NOT_MOVE_PENALTY:
             break
 
     # print(episode_reward)
