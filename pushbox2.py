@@ -42,32 +42,33 @@ all_state = [(1, 1), (1, 2), (1, 3),
 
 
 SIZE = 9
-HM_EPISODES = 10000
+HM_EPISODES = 100000
 
 MOVE_PENALTY = -1
 CAN_NOT_MOVE_PENALTY = -300
 # DISTANCE_REDUCE_REWARD = 1
 # 其实这里的设计不太对，如果移除箱子，应该有惩罚。
+DEST_CLOSE_REWARD = 1
 DEST_1_REWARD = 25
 DEST_2_REWARD = 50
 DEST_3_REWARD = 75
 
 epsilon = 0.9
 
-EPS_DECAY = 0.9998  # Every episode will be epsilon*EPS_DECAY
+EPS_DECAY = 0.99999  # Every episode will be epsilon*EPS_DECAY
 
-SHOW_EVERY = 1000  # how often to play through env visually.
+SHOW_EVERY = 10000  # how often to play through env visually.
 
-# start_q_table = "qtable-1590171988.pickle"  # None or Filename
-start_q_table = None  # None or Filename
+start_q_table = "pushbox2-1590699336.pickle"  # None or Filename
+# start_q_table = None  # None or Filename
 
 
 LEARNING_RATE = 0.1
 DISCOUNT = 0.95
 
 PLAYER_N = 1  # player key in dict
-BOX_N = 2  # box key in dict
-DEST_N = 3  # dest key in dict
+BOX_N = 3  # box key in dict
+DEST_N = 2  # dest key in dict
 WALL_N = 4
 ROAD_N = 5
 
@@ -107,8 +108,8 @@ def has_wall_in_front(x, y, choice):
         x = x+1
     for pos in all_state:
         if pos == (x, y):
-            return True
-    return False
+            return False
+    return True
 
 
 def move(player, box, choice):
@@ -169,13 +170,17 @@ class Blob:
 if start_q_table is None:
     # initialize the q-table#
     q_table = {}
+    # for player in all_state:  # 玩家
+    #     for box1 in all_state:
+    #         for box2 in all_state:
+    #             for box3 in all_state:
+    #                 q_table[(player, box1, box2, box3)] = [
+    #                     np.random.uniform(-5, 0) for i in range(4)]
+    # TODO 测试1个
     for player in all_state:  # 玩家
         for box1 in all_state:
-            for box2 in all_state:
-                for box3 in all_state:
-                    q_table[(player, box1, box2, box3)] = [
-                        np.random.uniform(-5, 0) for i in range(4)]
-
+            q_table[(player, box1)] = [
+                np.random.uniform(-5, 0) for i in range(4)]
 
 else:
     with open(start_q_table, "rb") as f:
@@ -184,7 +189,7 @@ else:
 # print(q_table)
 
 
-def take_action(player, action, box_list, dest_list):
+def take_action(player, action, box_list, dest_list, last_arrive_count, last_distance):
     # 这里要把箱子传进去。因为玩家的移动可能会影响箱子的位置。
     player.action(action, box_list)
     # 判断3个箱子有多少个在dest中,然后计算总的reward
@@ -193,27 +198,47 @@ def take_action(player, action, box_list, dest_list):
         for dest in dest_list:
             if box.position() == dest.position():
                 count += 1
-    if count > 0:
-        reward = count * DEST_1_REWARD
+    reward = 0
+    distance = 0
+    # 计算总距离,变短则+1
+    for box in box_list:
+        x = box.x
+        y = box.y
+        dx = dest_list[0].x
+        dy = dest_list[0].y
+        distance += (x-dx)**2 + (y-dy)**2
+
+    if distance - last_distance < 0:
+        reward += 1
     else:
-        # 其他情况都-1
-        reward = MOVE_PENALTY
+        reward -= 1
+    # 计算到达光标点的数量是否变化,如果推出去了，是要扣分的
+    diff = count - last_arrive_count
+    reward += diff * DEST_1_REWARD
 
-    return reward
+    last_arrive_count = count
+    last_distance = distance
+    if count == len(box_list):
+        return reward, last_arrive_count, last_distance, True
+    else:
+        return reward, last_arrive_count, last_distance, False
 
 
-# TODO 这个很复杂，有3个box
-def calc_q_value(reward, player, box_list):
-    new_pos = (player.position(), box_list[0].position(),
-               box_list[1].position(), box_list[2].position())
+def update_q_value(reward, player, box_list, old_state, action):
+    # TODO 测试一个
+    new_pos = (player.position(), box_list[0].position())
+    # new_pos = (player.position(), box_list[0].position(),
+    #            box_list[1].position(), box_list[2].position())
     max_future_q = np.max(q_table[new_pos])
 
     # 26 把当前相对位置状态和action下对应的收益qvalue取了出来。
     # TODO 这个要思考一下是不是new_pos
-    current_q = q_table[new_pos][action]
+    # 这里错了。哎，应该是老位置，不是新位置.
+    current_q = q_table[old_state][action]
 
     new_q = (1 - LEARNING_RATE) * current_q + \
         LEARNING_RATE * (reward + DISCOUNT * max_future_q)
+    q_table[old_state][action] = new_q
     return new_q
 
 
@@ -258,7 +283,6 @@ def show_movement(player, box_list, dest_list):
     else:
         if cv2.waitKey(1) & 0xFF == ord('q'):
             return False
-    sleep(0.1)
 
 
 # can look up from Q-table with: print(q_table[((-9, -2), (3, 9))]) for example
@@ -268,9 +292,11 @@ episode_rewards = []
 
 for episode in range(HM_EPISODES):
     player = Blob(1, 1)
-    box_list = [Blob(2, 2), Blob(2, 3), Blob(3, 2)]
-    dest_list = [Blob(7, 3), Blob(7, 4), Blob(7, 5)]
-    if episode % SHOW_EVERY == 0:
+    # box_list = [Blob(2, 2), Blob(2, 3), Blob(3, 2)]
+    # TODO 测试一个
+    box_list = [Blob(2, 2)]
+    dest_list = [Blob(3, 7), Blob(4, 7), Blob(5, 7)]
+    if episode % SHOW_EVERY == 0 and episode != 0:
         print(f"on #{episode}, epsilon is {epsilon}")
         print(
             f"{SHOW_EVERY} ep mean: {np.mean(episode_rewards[-SHOW_EVERY:])}")
@@ -279,26 +305,35 @@ for episode in range(HM_EPISODES):
         show = False
 
     episode_reward = 0
-    last_distance = None
+    last_distance = 0
+    last_arrive_count = 0
     for i in range(200):
-        # 这里就需要修改了，不用通过相对位置计算reward。 只有到达光标点计算reward
-
+        old_state = (player.position(), box_list[0].position())
         # 通过当前的位置计算出最大q-value的行动
         if np.random.random() > epsilon:
-            action = np.argmax(q_table[player.position(),
-                                       box_list[0].position(
-            ), box_list[1].position(),
-                box_list[2].position()])
+
+            # action = np.argmax(q_table[player.position(),
+            #                            box_list[0].position(
+            # ), box_list[1].position(),
+            #     box_list[2].position()])
+            # TODO 测试一个
+            action = np.argmax(
+                q_table[player.position(), box_list[0].position()])
+            pass
         else:
             action = np.random.randint(0, 4)
 
         # Take the action!
-        reward = take_action(player, action, box_list, dest_list)
+        reward, last_arrive_count, last_distance, finish = take_action(player, action, box_list,
+                                                                       dest_list, last_arrive_count, last_distance)
 
         # NOW WE KNOW THE REWARD, LET'S CALC YO
         # first we need to obs immediately after the move.
-        new_q = calc_q_value(reward, player, box_list)
-        q_table[obs][action] = new_q
+        update_q_value(reward, player, box_list, old_state, action)
+        # cur_state = (player.position(), box_list[0].position(
+        # ), box_list[1].position(), box_list[2].position())
+        # TODO 测试一个
+        # cur_state = (player.position(), box_list[0].position())
 
         if show:
             show_movement(player, box_list, dest_list)
@@ -307,7 +342,7 @@ for episode in range(HM_EPISODES):
         episode_reward += reward
 
         # 33 结束.碰到敌人或者碰到食物。 推箱子中也是，箱子碰到目标点就结束。
-        if reward == DEST_3_REWARD or reward == CAN_NOT_MOVE_PENALTY:
+        if finish:
             break
 
     # print(episode_reward)
@@ -329,5 +364,5 @@ plt.xlabel("episode #")
 plt.show()
 
 # 38 最后会把q-table存起来。action4个。state好像很多，100*100=1万种情况？ 错了 总共16万种。
-with open(f"qtable-{int(time.time())}.pickle", "wb") as f:
+with open(f"pushbox2-{int(time.time())}.pickle", "wb") as f:
     pickle.dump(q_table, f)
