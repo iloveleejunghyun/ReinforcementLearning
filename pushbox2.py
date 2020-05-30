@@ -30,19 +30,19 @@ import matplotlib.pyplot as plt
 import cv2
 from PIL import Image
 import numpy as np
-all_state = [(1, 1), (1, 2), (1, 3),
-             (2, 1), (2, 2), (2, 3),
-             (3, 1), (3, 2), (3, 3), (3, 7),
-             (4, 3), (4, 7),
-             (5, 3), (5, 4), (5, 5), (5, 6), (5, 7),
-             (6, 2), (6, 3), (6, 4), (6, 6), (6, 7),
-             (7, 2), (7, 3), (7, 4)]
+all_state = [(1, 1), (2, 1), (3, 1),
+             (1, 2), (2, 2), (3, 2),
+             (1, 3), (2, 3), (3, 3), (7, 3),
+             (3, 4), (7, 4),
+             (3, 5), (4, 5), (5, 5), (6, 5), (7, 5),
+             (2, 6), (3, 6), (4, 6), (6, 6), (7, 6),
+             (2, 7), (3, 7), (4, 7)]
 
 # style.use("ggplot")
 
 
 SIZE = 9
-HM_EPISODES = 100000
+HM_EPISODES = 50000
 
 MOVE_PENALTY = -1
 CAN_NOT_MOVE_PENALTY = -300
@@ -53,13 +53,13 @@ DEST_1_REWARD = 25
 DEST_2_REWARD = 50
 DEST_3_REWARD = 75
 
-epsilon = 0.9
+epsilon = 0.00
 
 EPS_DECAY = 0.99999  # Every episode will be epsilon*EPS_DECAY
 
-SHOW_EVERY = 10000  # how often to play through env visually.
+SHOW_EVERY = 1000  # how often to play through env visually.
 
-start_q_table = "pushbox2-1590699336.pickle"  # None or Filename
+start_q_table = "pushbox2-1590789093.pickle"  # None or Filename
 # start_q_table = None  # None or Filename
 
 
@@ -155,12 +155,15 @@ class Blob:
                 if not res:
                     # box和人物都往该方向移动一格
                     move(player, box, choice)
+                    return True
         else:
             # 没有box
             res = has_wall_in_front(self.x, self.y, choice)
             if not res:
                 # 人物往该方向移动一格
                 move(player, None, choice)
+                return True
+        return False
 
     def position(self):
         return self.x, self.y
@@ -170,17 +173,17 @@ class Blob:
 if start_q_table is None:
     # initialize the q-table#
     q_table = {}
-    # for player in all_state:  # 玩家
-    #     for box1 in all_state:
-    #         for box2 in all_state:
-    #             for box3 in all_state:
-    #                 q_table[(player, box1, box2, box3)] = [
-    #                     np.random.uniform(-5, 0) for i in range(4)]
-    # TODO 测试1个
     for player in all_state:  # 玩家
         for box1 in all_state:
-            q_table[(player, box1)] = [
-                np.random.uniform(-5, 0) for i in range(4)]
+            for box2 in all_state:
+                for box3 in all_state:
+                    q_table[(player, box1, box2, box3)] = [
+                        np.random.uniform(-5, 0) for i in range(4)]
+    # TODO 测试1个
+    # for player in all_state:  # 玩家
+    #     for box1 in all_state:
+    #         q_table[(player, box1)] = [
+    #             np.random.uniform(-5, 0) for i in range(4)]
 
 else:
     with open(start_q_table, "rb") as f:
@@ -190,15 +193,22 @@ else:
 
 
 def take_action(player, action, box_list, dest_list, last_arrive_count, last_distance):
+    reward = 0
+
     # 这里要把箱子传进去。因为玩家的移动可能会影响箱子的位置。
-    player.action(action, box_list)
+    res = player.action(action, box_list)
+
+    # 撞墙惩罚
+    if res == False:
+        reward += CAN_NOT_MOVE_PENALTY
+
     # 判断3个箱子有多少个在dest中,然后计算总的reward
     count = 0
     for box in box_list:
         for dest in dest_list:
             if box.position() == dest.position():
                 count += 1
-    reward = 0
+
     distance = 0
     # 计算总距离,变短则+1
     for box in box_list:
@@ -218,7 +228,8 @@ def take_action(player, action, box_list, dest_list, last_arrive_count, last_dis
 
     last_arrive_count = count
     last_distance = distance
-    if count == len(box_list):
+
+    if count == len(box_list) or res == False:
         return reward, last_arrive_count, last_distance, True
     else:
         return reward, last_arrive_count, last_distance, False
@@ -226,13 +237,13 @@ def take_action(player, action, box_list, dest_list, last_arrive_count, last_dis
 
 def update_q_value(reward, player, box_list, old_state, action):
     # TODO 测试一个
-    new_pos = (player.position(), box_list[0].position())
-    # new_pos = (player.position(), box_list[0].position(),
-    #            box_list[1].position(), box_list[2].position())
+    # new_pos = (player.position(), box_list[0].position())
+    new_pos = (player.position(), box_list[0].position(),
+               box_list[1].position(), box_list[2].position())
     max_future_q = np.max(q_table[new_pos])
 
     # 26 把当前相对位置状态和action下对应的收益qvalue取了出来。
-    # TODO 这个要思考一下是不是new_pos
+    # 这个要思考一下是不是new_pos。 不是是老的position位置
     # 这里错了。哎，应该是老位置，不是新位置.
     current_q = q_table[old_state][action]
 
@@ -251,18 +262,19 @@ def show_movement(player, box_list, dest_list):
 
     # 然后修改可达点的颜色
     for x, y in all_state:
-        env[x, y] = d[ROAD_N]
+        env[y, x] = d[ROAD_N]
 
     # 然后再修改玩家、box、dest的颜色
-    # sets the player tile to blue
-    env[player.x][player.y] = d[PLAYER_N]
-    # sets the box location tile to green color
-    for box in box_list:
-        env[box.x][box.y] = d[BOX_N]
-
     # sets the dest location to red
     for dest in dest_list:
-        env[dest.x][dest.y] = d[DEST_N]
+        env[dest.y][dest.x] = d[DEST_N]
+
+    # sets the player tile to blue
+    env[player.y][player.x] = d[PLAYER_N]
+
+    # sets the box location tile to green color
+    for box in box_list:
+        env[box.y][box.x] = d[BOX_N]
 
     # 30 构建image的一种方法，传入一个二维数组。数组的长宽是image的长宽，数组的值是image的颜色。
     # reading to rgb. Apparently. Even tho color definitions are bgr. ???
@@ -292,10 +304,10 @@ episode_rewards = []
 
 for episode in range(HM_EPISODES):
     player = Blob(1, 1)
-    # box_list = [Blob(2, 2), Blob(2, 3), Blob(3, 2)]
+    box_list = [Blob(2, 2), Blob(2, 3), Blob(3, 2)]
     # TODO 测试一个
-    box_list = [Blob(2, 2)]
-    dest_list = [Blob(3, 7), Blob(4, 7), Blob(5, 7)]
+    # box_list = [Blob(2, 2)]
+    dest_list = [Blob(7, 3), Blob(7, 4), Blob(7, 5)]
     if episode % SHOW_EVERY == 0 and episode != 0:
         print(f"on #{episode}, epsilon is {epsilon}")
         print(
@@ -308,17 +320,20 @@ for episode in range(HM_EPISODES):
     last_distance = 0
     last_arrive_count = 0
     for i in range(200):
-        old_state = (player.position(), box_list[0].position())
+        old_state = (player.position(), box_list[0].position(
+        ), box_list[1].position(), box_list[2].position())
+        # TODO 测试一个
+        # old_state = (player.position(), box_list[0].position())
         # 通过当前的位置计算出最大q-value的行动
         if np.random.random() > epsilon:
 
-            # action = np.argmax(q_table[player.position(),
-            #                            box_list[0].position(
-            # ), box_list[1].position(),
-            #     box_list[2].position()])
+            action = np.argmax(q_table[player.position(),
+                                       box_list[0].position(
+            ), box_list[1].position(),
+                box_list[2].position()])
             # TODO 测试一个
-            action = np.argmax(
-                q_table[player.position(), box_list[0].position()])
+            # action = np.argmax(
+            #     q_table[player.position(), box_list[0].position()])
             pass
         else:
             action = np.random.randint(0, 4)
@@ -330,10 +345,6 @@ for episode in range(HM_EPISODES):
         # NOW WE KNOW THE REWARD, LET'S CALC YO
         # first we need to obs immediately after the move.
         update_q_value(reward, player, box_list, old_state, action)
-        # cur_state = (player.position(), box_list[0].position(
-        # ), box_list[1].position(), box_list[2].position())
-        # TODO 测试一个
-        # cur_state = (player.position(), box_list[0].position())
 
         if show:
             show_movement(player, box_list, dest_list)
