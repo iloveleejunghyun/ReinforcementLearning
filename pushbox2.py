@@ -283,7 +283,7 @@ def show_movement(player, box_list, dest_list):
     # 31 image进行拉伸，不然太小了。
     # resizing so we can see our agent in all its glory.
     # print(img)
-    img = img.resize((300, 300))
+    img = img.resize((300, 300), Image.NEAREST)
     # print(img)
     # 31 又把这个image变成了数组？没看懂，固定套路？
     cv2.imshow("image", np.array(img))  # show it!
@@ -295,6 +295,7 @@ def show_movement(player, box_list, dest_list):
     else:
         if cv2.waitKey(1) & 0xFF == ord('q'):
             return False
+    sleep(0.1)
 
 
 # can look up from Q-table with: print(q_table[((-9, -2), (3, 9))]) for example

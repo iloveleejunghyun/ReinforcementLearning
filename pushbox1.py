@@ -39,13 +39,13 @@ DISTANCE_REDUCE_REWARD = 1
 DISTANCE_0_REWARD = 25
 
 
-epsilon = 0.1
+epsilon = 0.0
 
 EPS_DECAY = 0.9998  # Every episode will be epsilon*EPS_DECAY
 
-SHOW_EVERY = 1  # how often to play through env visually.
+SHOW_EVERY = 10000  # how often to play through env visually.
 
-start_q_table = "qtable-1590171988.pickle"  # None or Filename
+start_q_table = "qtable-1590815101.pickle"  # None or Filename
 # start_q_table = None  # None or Filename
 
 
@@ -221,11 +221,11 @@ def take_action(player, action, box, dest):
     return reward
 
 
-def calc_q_value(reward, player, box, dest):
+def calc_q_value(reward, player, box, dest, old_obs):
     new_obs = (player-box, box-dest)
     max_future_q = np.max(q_table[new_obs])
     # 26 把当前相对位置状态和action下对应的收益qvalue取了出来。
-    current_q = q_table[obs][action]
+    current_q = q_table[old_obs][action]
 
     # q-value最大值只能是箱子到达目标点的收益
     # if reward == DISTANCE_0_REWARD:
@@ -257,7 +257,7 @@ def show_movement(player, box, dest):
     # 31 image进行拉伸，不然太小了。
     # resizing so we can see our agent in all its glory.
     # print(img)
-    img = img.resize((300, 300))
+    img = img.resize((300, 300), Image.NEAREST)
     # print(img)
     # 31 又把这个image变成了数组？没看懂，固定套路？
     cv2.imshow("image", np.array(img))  # show it!
@@ -269,7 +269,7 @@ def show_movement(player, box, dest):
     else:
         if cv2.waitKey(1) & 0xFF == ord('q'):
             return False
-    sleep(0.1)
+    # sleep(0.1)
 
 
 # can look up from Q-table with: print(q_table[((-9, -2), (3, 9))]) for example
@@ -312,7 +312,7 @@ for episode in range(HM_EPISODES):
 
         # NOW WE KNOW THE REWARD, LET'S CALC YO
         # first we need to obs immediately after the move.
-        new_q = calc_q_value(reward, player, box, dest)
+        new_q = calc_q_value(reward, player, box, dest, obs)
         q_table[obs][action] = new_q
 
         if show:
