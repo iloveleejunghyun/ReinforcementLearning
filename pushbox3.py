@@ -26,12 +26,13 @@
 import random
 from time import sleep
 import time
-from matplotlib import style
+#from matplotlib import style
 import pickle
 import matplotlib.pyplot as plt
 import cv2
 from PIL import Image
 import numpy as np
+from math import sqrt
 dead_state = [(1, 1), (2, 1),
               (4, 3), (7, 3), (8, 3), (9, 3), (10, 3), (11, 3),
               (11, 4),
@@ -67,7 +68,7 @@ all_state = [(1, 1), (2, 1),
 
 slow_movement = False
 SIZE = 15
-HM_EPISODES = 200000
+HM_EPISODES = 20000
 
 MOVE_PENALTY = -1
 CAN_NOT_MOVE_PENALTY = -300
@@ -82,8 +83,8 @@ EPS_DECAY = 0.99  # Every episode will be epsilon*EPS_DECAY
 
 SHOW_EVERY = 1000  # how often to play through env visually.
 
-# start_q_table = "pushbox3-1590878109.pickle"  # None or Filename
-start_q_table = None  # None or Filename
+start_q_table = "pushbox3-1591135882.pickle"  # None or Filename
+#start_q_table = None  # None or Filename
 
 
 LEARNING_RATE = 0.2
@@ -218,13 +219,13 @@ def is_box_in_dead_road(box_list, dest_list):
         x, y = box.position()
         if (x, y) in [(4, 4), (5, 4), (6, 4), (7, 4)]:
             count += 1
-    if count > 2:
+    if count > 1:
         return True
 
     return False
 
 
-def take_action(player, action, box_list, dest_list, last_arrive_count, last_distance):
+def take_action(player, action, box_list, dest_list, last_arrive_count, last_distance, last_dis_4_4):
     reward = 0
 
     # 这里要把箱子传进去。因为玩家的移动可能会影响箱子的位置。
@@ -239,6 +240,37 @@ def take_action(player, action, box_list, dest_list, last_arrive_count, last_dis
     if is_dead == True:
         reward += CAN_NOT_MOVE_PENALTY
 
+    
+    #判断是否有box在关键中间点
+    box_in_4_4 = False
+    for box in box_list:
+        if box.position() == (4, 4):
+            box_in_4_4 = True
+            break
+
+    #当有箱子推到(4,4)时，引导玩家去(4,3)位置
+    dis_4_4 = 0
+    if box_in_4_4:
+        dis_4_4 = (player.x - 4) ** 2 + (player.y - 3) ** 2
+        if player.x <= 3 and dis_4_4 <= 7*7 and dis_4_4 < last_dis_4_4:
+            reward += 7 - sqrt(dis_4_4)
+
+    # 计算总距离,变短则+1
+    distance = 0
+    
+    for box in box_list:
+        x = box.x
+        y = box.y
+        dx = dest_list[0].x
+        dy = dest_list[0].y
+        distance += (x-dx)**2 + (y-dy)**2
+    #只有当box不在关键中间点时才计算效果
+ 
+    if distance - last_distance < 0:
+        reward += 1
+    else:
+        reward -= 1
+
     # 判断3个箱子有多少个在dest中,然后计算总的reward
     count = 0
     for box in box_list:
@@ -246,19 +278,7 @@ def take_action(player, action, box_list, dest_list, last_arrive_count, last_dis
             if box.position() == dest.position():
                 count += 1
 
-    distance = 0
-    # 计算总距离,变短则+1
-    for box in box_list:
-        x = box.x
-        y = box.y
-        dx = dest_list[0].x
-        dy = dest_list[0].y
-        distance += (x-dx)**2 + (y-dy)**2
-
-    if distance - last_distance < 0:
-        reward += 1
-    else:
-        reward -= 1
+    
     # 计算到达光标点的数量是否变化,如果推出去了，是要扣分的
     diff = count - last_arrive_count
     reward += diff * DEST_1_REWARD
@@ -270,12 +290,13 @@ def take_action(player, action, box_list, dest_list, last_arrive_count, last_dis
 
     last_arrive_count = count
     last_distance = distance
+    last_dis_4_4 = dis_4_4
 
     if count == len(box_list) or res == False or is_dead:
 
-        return reward, last_arrive_count, last_distance, True
+        return reward, last_arrive_count, last_distance, last_dis_4_4, True
     else:
-        return reward, last_arrive_count, last_distance, False
+        return reward, last_arrive_count, last_distance, last_dis_4_4, False
 
 
 def get_qtable_value(state):
@@ -399,6 +420,7 @@ for episode in range(HM_EPISODES):
     episode_reward = 0
     last_distance = 0
     last_arrive_count = 0
+    last_dis_4_4 = 0
     for i in range(300):
         pos_list = [player.position()]
         for box in box_list:
@@ -411,8 +433,8 @@ for episode in range(HM_EPISODES):
             action = get_selectable_random_action(player, box_list)
             # action = np.random.randint(0, 4)
         # Take the action!
-        reward, last_arrive_count, last_distance, finish = take_action(player, action, box_list,
-                                                                       dest_list, last_arrive_count, last_distance)
+        reward, last_arrive_count, last_distance, last_dis_4_4, finish = take_action(player, action, box_list,
+                                                                       dest_list, last_arrive_count, last_distance, last_dis_4_4)
 
         # NOW WE KNOW THE REWARD, LET'S CALC YO
         # first we need to obs immediately after the move.
